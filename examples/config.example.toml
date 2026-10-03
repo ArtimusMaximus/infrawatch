@@ -3,7 +3,7 @@
 name = "example-app"
 url = "https://app.example.com/health"
 
-# Reserved for the future container-monitoring milestone; not used yet.
+# SSH must work noninteractively; omit containers or use [] to inspect all.
 [[docker_hosts]]
 name = "example-server"
 ssh_target = "monitor@example-server"

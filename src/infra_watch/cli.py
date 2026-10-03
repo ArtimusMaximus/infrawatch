@@ -11,6 +11,7 @@ from infra_watch.models import HealthCheckResult, SystemMetrics
 from infra_watch.config import config_path, load_http_targets, load_docker_hosts
 
 from infra_watch.collectors.docker import check_docker_host
+from infra_watch.targets import edit_target
 
 LOGGER = logging.getLogger(__name__)
 
@@ -79,6 +80,15 @@ def _build_parser() -> argparse.ArgumentParser:
     containers.add_argument("host", nargs="?", default="all", help="Configured host name or all.")
     containers.add_argument("--config", type=Path)
     containers.add_argument("--timeout", type=float, default=10, help="Total timeout per host in seconds.")
+    targets = subparsers.add_parser("targets", help="Manage persistent HTTP targets.")
+    actions = targets.add_subparsers(dest="action", required=True)
+    for action in ("list", "add", "remove"):
+        command = actions.add_parser(action)
+        command.add_argument("--config", type=Path)
+        if action != "list":
+            command.add_argument("name")
+        if action == "add":
+            command.add_argument("url")
     return parser
 
 
@@ -87,6 +97,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = _build_parser().parse_args(argv)
 
+    if args.command == "targets":
+        path = config_path(args.config)
+        try:
+            if args.action == "list":
+                targets = load_http_targets(path)
+                for target in targets:
+                    print(f"{target.name}: {target.url}")
+                if not targets:
+                    print("No HTTP targets configured")
+            else:
+                edit_target(path, args.name, args.url if args.action == "add" else None)
+                print(f"Target {args.action} completed: {args.name} ({path})")
+        except ValueError as error:
+            LOGGER.error("%s", error)
+            return 2
+        return 0
     if args.command == "containers":
         try:
             hosts = load_docker_hosts(config_path(args.config))

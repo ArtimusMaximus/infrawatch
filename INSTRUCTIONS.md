@@ -83,7 +83,7 @@ Lookup order: `--config PATH`, then `./config.toml`, then
 `~/.config/infrawatch/config.toml`. Every `check all` rereads the file.
 `INFRAWATCH_TARGETS`, if set, overrides the file, including when empty.
 For initial setup, copy `examples/config.example.toml` to `config.toml`.
-Personal config files are ignored by Git. Docker host entries are not used yet.
+Personal config files are ignored by Git. Docker host entries are used by `infrawatch containers`.
 
 ## Check the project
 
@@ -103,12 +103,11 @@ or network connection is needed. Leave the environment with `deactivate`.
 - `infrawatch check all`: persistent TOML targets, with an optional
   `INFRAWATCH_TARGETS` override.
 - A local demo server and pytest coverage for collectors and CLI behavior.
-- FastAPI, PostgreSQL, Prometheus, Grafana, Docker Compose, scheduling,
+- FastAPI, PostgreSQL, Prometheus, Grafana, Docker Compose deployment, scheduling,
   alerting, and remediation are future phases.
 
 Application code lives in `src/infra_watch/`, tests in `tests/`, and the demo
-in `examples/`. See [README.md](README.md) for more detail. Next milestone: inspect container state over SSH on the configured Docker
-host, after reviewing persistent configuration.
+in `examples/`. See [README.md](README.md) for more detail. Container monitoring over SSH and HTTP target management are now implemented.
 
 
 ## Git workflow
@@ -136,3 +135,28 @@ git merge --no-ff feature/persistent-target-config
 The merge commit preserves the feature's branch history. On a shared remote,
 push the branch and open a pull request for review, then merge through the
 team's pull-request workflow.
+
+
+## Container monitoring and target management
+
+```bash
+infrawatch containers
+infrawatch containers lan-server --timeout 10
+infrawatch targets list
+infrawatch targets add another-app https://app.example.com/health
+infrawatch targets remove another-app
+```
+
+Container checks use `docker_hosts` from your config. SSH requires noninteractive
+login and a verified host key; the remote account must have Docker permissions.
+Configured container names are checked even if stopped or missing. Omit the
+`containers` list to inspect all. State, health, and restart count are shown;
+`not configured` means Docker has no health check for that container.
+
+Target edits persist immediately and preserve Docker entries. Unset
+`INFRAWATCH_TARGETS` before `check all` to use the file. Use `--config PATH` on
+container checks or after a target-management action to choose another file.
+
+The next increments are on `feature/container-checks-and-target-management`.
+Review with `git diff master...feature/container-checks-and-target-management`;
+run tests and the commands above before merging that branch into master.
