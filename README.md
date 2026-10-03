@@ -66,7 +66,7 @@ File lookup uses `--config PATH`, then `./config.toml`, then the user config.
 The file is read afresh for each `check all`; no restart is required. Invalid
 TOML, unreadable files, invalid HTTP entries, and duplicate names return exit
 code `2` before requests start. Each HTTP entry requires a non-empty `name`
-and an HTTP/HTTPS `url`. Docker entries are reserved and not used yet.
+and an HTTP/HTTPS `url`. Docker entries configure the SSH container checks described below.
 Explicit URL checks and `status` do not require a configuration file.
 
 An explicitly set `INFRAWATCH_TARGETS` overrides the file for `check all`, even
@@ -145,4 +145,76 @@ Stop the demo server with `Ctrl+C`.
 ## Current Scope
 
 The current milestone intentionally excludes scheduling, APIs, databases, Prometheus, Grafana,
-Docker, cloud monitoring, remote nodes, alerting, and automated remediation.
+Docker Compose deployment, cloud metrics, alerting, and automated remediation.
+Read-only Docker container checks over SSH are supported.
+
+
+## Container status over SSH
+
+An HTTP response checks app availability. Docker inspection checks the underlying
+container independently: running state, Docker health status, and cumulative
+restart count. Configure hosts in the same TOML file:
+
+```toml
+[[docker_hosts]]
+name = "example-server"
+ssh_target = "monitor@example-server"
+containers = ["example-app"]
+```
+
+`containers` lists expected names; a missing container is reported as `missing`.
+Omit the list or set it to `[]` to inspect all containers, including stopped ones.
+No Docker daemon API exposure or Python SSH dependency is required. The remote
+SSH account must be able to run Docker without a password prompt. Establish and
+verify the host key with your normal interactive SSH login first, and configure
+SSH keys or an agent. InfraWatch uses `BatchMode=yes` and strict host-key checking;
+it does not prompt for passwords or automatically trust unknown hosts.
+
+```bash
+infrawatch containers
+infrawatch containers example-server --timeout 10
+infrawatch containers --config /path/to/config.toml
+```
+
+The timeout bounds the entire SSH subprocess per host. Host checks are sequential;
+a failed host does not stop the others. Exit codes: `0` = all inspected containers
+running with healthy or unconfigured health checks; `1` = a host error or a
+container missing, stopped, restarting, unhealthy, or still starting; `2` =
+invalid configuration, unknown host, or invalid timeout. An empty server reports
+no containers and exits successfully unless specific expected names were listed.
+Restart counts are informational; a count above zero alone does not fail a check.
+A container without `HEALTHCHECK` is labeled `not configured`, not `healthy`.
+
+To validate manually, compare the output with `docker ps -a` and `docker inspect`
+on the remote server. These commands only inspect state; they do not change
+container configuration or restart services. On SSH errors, verify connectivity
+and permissions with `ssh USER@HOST 'docker ps -a'`.
+
+## Manage saved HTTP targets
+
+```bash
+infrawatch targets list
+infrawatch targets add example-app https://app.example.com/health
+infrawatch targets remove example-app
+# All three actions accept --config PATH after the action.
+```
+
+These commands manage the file, regardless of `INFRAWATCH_TARGETS`. Unset that
+variable to make `check all` use file changes. Names must be unique; duplicate
+adds and removal of unknown names return `2`. Add creates a missing file and
+parent directory. New files use owner-only permissions. Existing permissions
+are preserved. Edits validate the candidate file and replace it atomically,
+using an exclusive `.lock` file and detecting external changes before replacement.
+Docker entries and unrelated configuration are preserved. Removal supports
+standard `[[http_targets]]` tables; alternate TOML layouts must be edited manually.
+Comments inside a removed target are removed along with it. If a killed process
+leaves a `.lock` file, confirm no editor command is running before deleting that
+lock. Symlink config files are rejected for editing.
+
+Manual check without changing your inventory:
+
+```bash
+infrawatch targets add demo http://127.0.0.1:8000/health --config /tmp/infrawatch-demo.toml
+infrawatch targets list --config /tmp/infrawatch-demo.toml
+infrawatch targets remove demo --config /tmp/infrawatch-demo.toml
+```

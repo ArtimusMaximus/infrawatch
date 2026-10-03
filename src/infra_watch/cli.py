@@ -8,7 +8,10 @@ from pathlib import Path
 
 from infra_watch.collectors import check_http_health, collect_system_metrics
 from infra_watch.models import HealthCheckResult, SystemMetrics
-from infra_watch.config import config_path, load_http_targets
+from infra_watch.config import config_path, load_http_targets, load_docker_hosts
+
+from infra_watch.collectors.docker import check_docker_host
+from infra_watch.targets import edit_target
 
 LOGGER = logging.getLogger(__name__)
 
@@ -73,6 +76,19 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="SECONDS",
         help="Request timeout in seconds (default: 5).",
     )
+    containers = subparsers.add_parser("containers", help="Inspect Docker hosts over SSH.")
+    containers.add_argument("host", nargs="?", default="all", help="Configured host name or all.")
+    containers.add_argument("--config", type=Path)
+    containers.add_argument("--timeout", type=float, default=10, help="Total timeout per host in seconds.")
+    targets = subparsers.add_parser("targets", help="Manage persistent HTTP targets.")
+    actions = targets.add_subparsers(dest="action", required=True)
+    for action in ("list", "add", "remove"):
+        command = actions.add_parser(action)
+        command.add_argument("--config", type=Path)
+        if action != "list":
+            command.add_argument("name")
+        if action == "add":
+            command.add_argument("url")
     return parser
 
 
@@ -81,6 +97,51 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = _build_parser().parse_args(argv)
 
+    if args.command == "targets":
+        path = config_path(args.config)
+        try:
+            if args.action == "list":
+                targets = load_http_targets(path)
+                for target in targets:
+                    print(f"{target.name}: {target.url}")
+                if not targets:
+                    print("No HTTP targets configured")
+            else:
+                edit_target(path, args.name, args.url if args.action == "add" else None)
+                print(f"Target {args.action} completed: {args.name} ({path})")
+        except ValueError as error:
+            LOGGER.error("%s", error)
+            return 2
+        return 0
+    if args.command == "containers":
+        try:
+            hosts = load_docker_hosts(config_path(args.config))
+            if args.host != "all":
+                hosts = [host for host in hosts if host.name == args.host]
+            if not hosts:
+                raise ValueError("No matching Docker hosts configured")
+            import math
+            if not math.isfinite(args.timeout) or args.timeout <= 0:
+                raise ValueError("timeout must be a finite positive number")
+        except ValueError as error:
+            LOGGER.error("%s", error)
+            return 2
+        failed = False
+        for host in hosts:
+            print(f"Host: {host.name}")
+            try:
+                results = check_docker_host(host, args.timeout)
+            except RuntimeError as error:
+                print(f"Error: {error}")
+                failed = True
+                continue
+            if not results:
+                print("No containers found")
+            for result in results:
+                print(f"Container: {result.name} | State: {result.state} | "
+                      f"Health: {result.health} | Restarts: {result.restart_count}")
+                failed = failed or not result.healthy
+        return int(failed)
     if args.command == "status":
         try:
             print(_render_status(collect_system_metrics()))
