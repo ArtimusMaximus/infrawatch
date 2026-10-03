@@ -193,7 +193,9 @@ def test_check_all_uses_configured_targets(monkeypatch, capsys) -> None:
 
 
 @pytest.mark.parametrize("targets", [None, "", " \n\t "])
-def test_check_all_requires_targets(monkeypatch, caplog, targets: str | None) -> None:
+def test_check_all_requires_targets(monkeypatch, caplog, tmp_path, targets: str | None) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "config_path", lambda explicit: tmp_path / "missing.toml")
     if targets is None:
         monkeypatch.delenv("INFRAWATCH_TARGETS", raising=False)
     else:
@@ -214,3 +216,41 @@ def test_check_all_rejects_additional_urls(monkeypatch, caplog) -> None:
     monkeypatch.setattr(cli, "check_http_health", unexpected_check)
     assert cli.main(["check", "all", "https://service.test/health"]) == 2
     assert "Use 'all' on its own" in caplog.text
+
+
+def test_check_all_loads_file_and_passes_timeout(monkeypatch, tmp_path, capsys) -> None:
+    path = tmp_path / "custom.toml"
+    path.write_text('[[http_targets]]\nname="app"\nurl="https://app.test/health"\n')
+    monkeypatch.delenv("INFRAWATCH_TARGETS", raising=False)
+    with httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, request=request)
+    )) as client:
+        def check(url: str, timeout: float) -> HealthCheckResult:
+            assert timeout == 2
+            return check_http_health(url, timeout, client=client)
+        monkeypatch.setattr(cli, "check_http_health", check)
+        assert cli.main(["check", "all", "--config", str(path), "--timeout", "2"]) == 0
+    output = capsys.readouterr().out
+    assert "Name: app" in output
+    assert "1 healthy, 0 unhealthy, 0 invalid" in output
+
+
+@pytest.mark.parametrize("environment", [None, "https://override.test", ""])
+def test_config_errors_and_environment_precedence(monkeypatch, tmp_path, environment) -> None:
+    path = tmp_path / "broken.toml"
+    path.write_text("invalid toml")
+    monkeypatch.delenv("INFRAWATCH_TARGETS", raising=False)
+    if environment is not None:
+        monkeypatch.setenv("INFRAWATCH_TARGETS", environment)
+    checked = []
+    def check(url: str, timeout: float) -> HealthCheckResult:
+        checked.append(url)
+        return HealthCheckResult(target_url=url, healthy=True,
+            checked_at=datetime.now(timezone.utc), response_time_ms=1)
+    monkeypatch.setattr(cli, "check_http_health", check)
+    code = cli.main(["check", "all", "--config", str(path)])
+    assert code == (0 if environment else 2)
+    assert checked == ([environment] if environment else [])
+    checked.clear()
+    assert cli.main(["check", "https://explicit.test", "--config", str(path)]) == 0
+    assert checked == ["https://explicit.test"]

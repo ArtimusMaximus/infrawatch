@@ -4,9 +4,11 @@ import argparse
 import logging
 import os
 from collections.abc import Sequence
+from pathlib import Path
 
 from infra_watch.collectors import check_http_health, collect_system_metrics
 from infra_watch.models import HealthCheckResult, SystemMetrics
+from infra_watch.config import config_path, load_http_targets
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,7 +60,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     check_parser.add_argument(
         "urls", nargs="+",
-        help="HTTP or HTTPS URLs, or 'all' to check INFRAWATCH_TARGETS."
+        help="HTTP or HTTPS URLs, or 'all' to check saved targets."
+    )
+    check_parser.add_argument(
+        "--config", type=Path, metavar="PATH",
+        help="TOML configuration file (default: ./config.toml, then user config).",
     )
     check_parser.add_argument(
         "--timeout",
@@ -83,15 +89,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
     elif args.command == "check":
         urls = args.urls
+        target_names: list[str] = []
         if "all" in urls:
             if urls != ["all"]:
                 LOGGER.error("Use 'all' on its own, without additional URLs")
                 return 2
-            urls = os.environ.get("INFRAWATCH_TARGETS", "").split()
+            if "INFRAWATCH_TARGETS" in os.environ:
+                urls = os.environ["INFRAWATCH_TARGETS"].split()
+            else:
+                try:
+                    targets = load_http_targets(config_path(args.config))
+                except ValueError as error:
+                    LOGGER.error("%s. Set INFRAWATCH_TARGETS or configure HTTP targets", error)
+                    return 2
+                urls = [target.url for target in targets]
+                target_names = [target.name for target in targets]
             if not urls:
                 LOGGER.error(
-                    "No targets configured. Set INFRAWATCH_TARGETS to "
-                    "a space-separated list of HTTP or HTTPS URLs"
+                    "No targets configured. Set INFRAWATCH_TARGETS or add "
+                    "[[http_targets]] entries to your configuration"
                 )
                 return 2
         healthy_count = 0
@@ -100,6 +116,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         for index, url in enumerate(urls):
             if index:
                 print()
+            if target_names:
+                print(f"Name: {target_names[index]}")
             try:
                 result = check_http_health(url, args.timeout)
             except ValueError as error:

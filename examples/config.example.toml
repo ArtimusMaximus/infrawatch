@@ -1,0 +1,10 @@
+# Copy to config.toml or ~/.config/infrawatch/config.toml.
+[[http_targets]]
+name = "example-app"
+url = "https://app.example.com/health"
+
+# Reserved for the future container-monitoring milestone; not used yet.
+[[docker_hosts]]
+name = "example-server"
+ssh_target = "monitor@example-server"
+containers = ["example-app"]

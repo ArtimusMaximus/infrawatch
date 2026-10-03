@@ -49,8 +49,30 @@ invalid target does not prevent checks of the remaining targets. The command
 exits with `0` when all targets are healthy, `1` when any are unhealthy, or `2`
 when any input is invalid (taking precedence over unhealthy results).
 
-To avoid typing URLs each time, configure a space-separated target list in your
-terminal:
+To persist targets across terminal sessions and virtual-environment recreation,
+copy `examples/config.example.toml` to `config.toml` in the project root, then
+edit its named `[[http_targets]]` entries. Personal `config.toml` files are
+ignored by Git. Alternatively, store the file at
+`~/.config/infrawatch/config.toml` for use from any working directory.
+
+```bash
+cp examples/config.example.toml config.toml
+# Edit config.toml with your actual application URLs.
+infrawatch check all
+infrawatch check all --config /path/to/config.toml --timeout 2
+```
+
+File lookup uses `--config PATH`, then `./config.toml`, then the user config.
+The file is read afresh for each `check all`; no restart is required. Invalid
+TOML, unreadable files, invalid HTTP entries, and duplicate names return exit
+code `2` before requests start. Each HTTP entry requires a non-empty `name`
+and an HTTP/HTTPS `url`. Docker entries are reserved and not used yet.
+Explicit URL checks and `status` do not require a configuration file.
+
+An explicitly set `INFRAWATCH_TARGETS` overrides the file for `check all`, even
+when empty. Use `unset INFRAWATCH_TARGETS` to return to file-based targets.
+
+For a temporary space-separated target list in your terminal:
 
 ```bash
 export INFRAWATCH_TARGETS="http://127.0.0.1:8000/health http://127.0.0.1:8000/unhealthy"
