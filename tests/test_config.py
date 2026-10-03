@@ -42,3 +42,14 @@ def test_config_path_precedence(tmp_path: Path, monkeypatch) -> None:
     Path("config.toml").touch()
     assert config_path() == Path("config.toml")
     assert config_path(Path("custom.toml")) == Path("custom.toml")
+
+
+def test_docker_config(tmp_path: Path) -> None:
+    from infra_watch.config import load_docker_hosts
+    path = tmp_path / "config.toml"
+    path.write_text('[[docker_hosts]]\nname="server"\nssh_target="monitor@server.test"\ncontainers=["app"]')
+    host = load_docker_hosts(path)[0]
+    assert host.containers == ("app",)
+    path.write_text('[[docker_hosts]]\nname="server"\nssh_target="-oProxyCommand=bad"')
+    with pytest.raises(ValueError):
+        load_docker_hosts(path)

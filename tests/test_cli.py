@@ -254,3 +254,21 @@ def test_config_errors_and_environment_precedence(monkeypatch, tmp_path, environ
     checked.clear()
     assert cli.main(["check", "https://explicit.test", "--config", str(path)]) == 0
     assert checked == ["https://explicit.test"]
+
+
+def test_containers_continues_after_failed_host(monkeypatch, tmp_path, capsys) -> None:
+    from infra_watch.collectors.docker import ContainerStatus
+    path = tmp_path / "config.toml"
+    path.write_text('[[docker_hosts]]\nname="first"\nssh_target="first.test"\n[[docker_hosts]]\nname="second"\nssh_target="second.test"')
+    checked = []
+    def check(host, timeout):
+        checked.append(host.name)
+        if host.name == "first":
+            raise RuntimeError("SSH container check timed out")
+        return [ContainerStatus("app", "running", "not configured", 0)]
+    monkeypatch.setattr(cli, "check_docker_host", check)
+    assert cli.main(["containers", "--config", str(path)]) == 1
+    assert checked == ["first", "second"]
+    assert "Container: app" in capsys.readouterr().out
+    assert cli.main(["containers", "unknown", "--config", str(path)]) == 2
+    assert cli.main(["containers", "second", "--config", str(path)]) == 0

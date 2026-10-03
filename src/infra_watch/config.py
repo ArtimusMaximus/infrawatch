@@ -58,3 +58,44 @@ def load_http_targets(path: Path) -> list[HttpTarget]:
         names.add(name)
         targets.append(HttpTarget(name=name, url=url))
     return targets
+
+
+@dataclass(frozen=True)
+class DockerHost:
+    """SSH host and optional expected container names."""
+
+    name: str
+    ssh_target: str
+    containers: tuple[str, ...] = ()
+
+
+def load_docker_hosts(path: Path) -> list[DockerHost]:
+    """Validate Docker inventory without contacting hosts."""
+    import re
+
+    try:
+        with path.open("rb") as stream:
+            entries = tomllib.load(stream).get("docker_hosts", [])
+    except (OSError, ValueError) as error:
+        raise ValueError(f"Unable to load configuration {path}") from error
+    if not isinstance(entries, list):
+        raise ValueError("docker_hosts must be an array of tables")
+    hosts: list[DockerHost] = []
+    names: set[str] = set()
+    for index, entry in enumerate(entries, 1):
+        if not isinstance(entry, dict) or set(entry) - {"name", "ssh_target", "containers"}:
+            raise ValueError(f"Docker host {index} has invalid fields")
+        name = entry.get("name")
+        target = entry.get("ssh_target")
+        containers = entry.get("containers", [])
+        if not isinstance(name, str) or not name.strip() or name.strip() in names:
+            raise ValueError(f"Docker host {index} requires a unique non-empty name")
+        if not isinstance(target, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@:-]*", target):
+            raise ValueError(f"Docker host {index} requires an SSH alias or user@host")
+        if (not isinstance(containers, list)
+                or any(not isinstance(c, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", c) for c in containers)
+                or len(set(containers)) != len(containers)):
+            raise ValueError(f"Docker host {index} has invalid or duplicate container names")
+        names.add(name.strip())
+        hosts.append(DockerHost(name.strip(), target, tuple(containers)))
+    return hosts
